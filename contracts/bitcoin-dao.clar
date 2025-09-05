@@ -236,3 +236,82 @@
     )
   )
 )
+
+;; Cast vote on proposal
+(define-public (cast-vote
+    (proposal-id uint)
+    (support bool)
+  )
+  (begin
+    (try! (ensure-initialized))
+    (try! (validate-proposal-exists proposal-id))
+
+    (let (
+        (proposal (unwrap! (map-get? investment-proposals proposal-id)
+          ERR_PROPOSAL_NOT_FOUND
+        ))
+        (voter-power (get-voting-power tx-sender))
+      )
+      ;; Validate voting conditions
+      (asserts! (> voter-power u0) ERR_UNAUTHORIZED)
+      (asserts! (< stacks-block-height (get expiry-height proposal))
+        ERR_PROPOSAL_EXPIRED
+      )
+      (asserts!
+        (is-none (map-get? member-votes {
+          proposal-id: proposal-id,
+          member: tx-sender,
+        }))
+        ERR_ALREADY_VOTED
+      )
+
+      ;; Record vote
+      (map-set member-votes {
+        proposal-id: proposal-id,
+        member: tx-sender,
+      }
+        support
+      )
+
+      ;; Update vote tallies
+      (map-set investment-proposals proposal-id
+        (merge proposal {
+          votes-for: (if support
+            (+ (get votes-for proposal) voter-power)
+            (get votes-for proposal)
+          ),
+          votes-against: (if support
+            (get votes-against proposal)
+            (+ (get votes-against proposal) voter-power)
+          ),
+        })
+      )
+
+      (ok true)
+    )
+  )
+)
+
+;; Execute approved proposal
+(define-public (execute-proposal (proposal-id uint))
+  (begin
+    (try! (ensure-initialized))
+    (try! (validate-proposal-exists proposal-id))
+
+    (let (
+        (proposal (unwrap! (map-get? investment-proposals proposal-id)
+          ERR_PROPOSAL_NOT_FOUND
+        ))
+        (treasury-balance (stx-get-balance (as-contract tx-sender)))
+      )
+      ;; Validate execution conditions
+      (asserts! (not (get is-executed proposal)) ERR_UNAUTHORIZED)
+      (asserts! (>= stacks-block-height (get expiry-height proposal))
+        ERR_PROPOSAL_EXPIRED
+      )
+      (asserts! (> (get votes-for proposal) (get votes-against proposal))
+        ERR_UNAUTHORIZED
+      )
+      (asserts! (>= treasury-balance (get funding-amount proposal))
+        ERR_INSUFFICIENT_BALANCE
+      )
