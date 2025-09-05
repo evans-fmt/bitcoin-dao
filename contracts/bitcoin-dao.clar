@@ -79,3 +79,87 @@
     votes-against: uint,
   }
 )
+
+;; Voting records to prevent double-voting
+(define-map member-votes
+  {
+    proposal-id: uint,
+    member: principal,
+  }
+  bool
+)
+
+;; PRIVATE HELPER FUNCTIONS
+
+(define-private (is-owner)
+  (is-eq tx-sender CONTRACT_OWNER)
+)
+
+(define-private (ensure-initialized)
+  (ok (asserts! (var-get is-initialized) ERR_NOT_INITIALIZED))
+)
+
+(define-private (validate-proposal-exists (proposal-id uint))
+  (ok (asserts! (<= proposal-id (var-get proposal-counter)) ERR_INVALID_PROPOSAL_ID))
+)
+
+(define-private (get-voting-power (member principal))
+  (default-to u0 (map-get? member-stakes member))
+)
+
+(define-private (mint-voting-tokens
+    (member principal)
+    (amount uint)
+  )
+  (let ((current-stake (default-to u0 (map-get? member-stakes member))))
+    (map-set member-stakes member (+ current-stake amount))
+    (var-set total-staked (+ (var-get total-staked) amount))
+    (ok true)
+  )
+)
+
+(define-private (burn-voting-tokens
+    (member principal)
+    (amount uint)
+  )
+  (let ((current-stake (default-to u0 (map-get? member-stakes member))))
+    (asserts! (>= current-stake amount) ERR_INSUFFICIENT_BALANCE)
+    (map-set member-stakes member (- current-stake amount))
+    (var-set total-staked (- (var-get total-staked) amount))
+    (ok true)
+  )
+)
+
+;; PUBLIC FUNCTIONS
+
+;; Initialize the DAO (owner-only)
+(define-public (initialize-dao)
+  (begin
+    (asserts! (is-owner) ERR_OWNER_ONLY)
+    (asserts! (not (var-get is-initialized)) ERR_ALREADY_INITIALIZED)
+    (var-set is-initialized true)
+    (ok true)
+  )
+)
+
+;; Stake STX to join the DAO and gain voting rights
+(define-public (stake-tokens (amount uint))
+  (begin
+    (try! (ensure-initialized))
+    (asserts! (>= amount (var-get minimum-stake)) ERR_BELOW_MINIMUM)
+    (asserts! (> amount u0) ERR_INVALID_AMOUNT)
+
+    ;; Transfer STX to contract treasury
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+
+    ;; Record stake with time-lock
+    (map-set stake-records tx-sender {
+      amount: amount,
+      unlock-height: (+ stacks-block-height (var-get lock-period)),
+      stake-height: stacks-block-height,
+    })
+
+    ;; Mint voting power
+    (mint-voting-tokens tx-sender amount)
+  )
+)
