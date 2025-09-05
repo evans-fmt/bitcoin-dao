@@ -315,3 +315,58 @@
       (asserts! (>= treasury-balance (get funding-amount proposal))
         ERR_INSUFFICIENT_BALANCE
       )
+
+      ;; Execute funding transfer
+      (try! (as-contract (stx-transfer? (get funding-amount proposal) (as-contract tx-sender)
+        (get beneficiary proposal)
+      )))
+
+      ;; Mark as executed
+      (map-set investment-proposals proposal-id
+        (merge proposal { is-executed: true })
+      )
+      (ok true)
+    )
+  )
+)
+
+;; READ-ONLY FUNCTIONS
+
+(define-read-only (get-member-stake (member principal))
+  (ok (default-to u0 (map-get? member-stakes member)))
+)
+
+(define-read-only (get-total-staked)
+  (ok (var-get total-staked))
+)
+
+(define-read-only (get-proposal-details (proposal-id uint))
+  (ok (map-get? investment-proposals proposal-id))
+)
+
+(define-read-only (get-stake-info (member principal))
+  (ok (map-get? stake-records member))
+)
+
+(define-read-only (get-member-vote
+    (proposal-id uint)
+    (member principal)
+  )
+  (ok (map-get? member-votes {
+    proposal-id: proposal-id,
+    member: member,
+  }))
+)
+
+(define-read-only (get-treasury-balance)
+  (ok (stx-get-balance (as-contract tx-sender)))
+)
+
+(define-read-only (get-dao-status)
+  (ok {
+    initialized: (var-get is-initialized),
+    total-staked: (var-get total-staked),
+    proposal-count: (var-get proposal-counter),
+    treasury-balance: (stx-get-balance (as-contract tx-sender)),
+  })
+)
