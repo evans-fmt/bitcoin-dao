@@ -163,3 +163,76 @@
     (mint-voting-tokens tx-sender amount)
   )
 )
+
+;; Unstake tokens after lock period expires
+(define-public (unstake-tokens (amount uint))
+  (begin
+    (try! (ensure-initialized))
+    (asserts! (> amount u0) ERR_INVALID_AMOUNT)
+
+    (let (
+        (stake-info (unwrap! (map-get? stake-records tx-sender) ERR_UNAUTHORIZED))
+        (member-power (get-voting-power tx-sender))
+      )
+      (asserts! (>= stacks-block-height (get unlock-height stake-info))
+        ERR_STAKE_LOCKED
+      )
+      (asserts! (>= member-power amount) ERR_INSUFFICIENT_BALANCE)
+
+      ;; Burn voting tokens
+      (try! (burn-voting-tokens tx-sender amount))
+
+      ;; Return STX to member
+      (as-contract (stx-transfer? amount (as-contract tx-sender) tx-sender))
+    )
+  )
+)
+
+;; Create investment proposal
+(define-public (propose-investment
+    (title (string-ascii 256))
+    (funding-amount uint)
+    (beneficiary principal)
+    (duration uint)
+  )
+  (begin
+    (try! (ensure-initialized))
+
+    ;; Validate proposal parameters
+    (asserts! (> (len title) u0) ERR_INVALID_DESCRIPTION)
+    (asserts! (> funding-amount u0) ERR_INVALID_AMOUNT)
+    (asserts! (not (is-eq beneficiary (as-contract tx-sender)))
+      ERR_INVALID_TARGET
+    )
+    (asserts!
+      (and
+        (>= duration MIN_PROPOSAL_DURATION)
+        (<= duration MAX_PROPOSAL_DURATION)
+      )
+      ERR_INVALID_AMOUNT
+    )
+
+    (let (
+        (proposer-power (get-voting-power tx-sender))
+        (new-proposal-id (+ (var-get proposal-counter) u1))
+      )
+      ;; Ensure proposer has voting power
+      (asserts! (> proposer-power u0) ERR_UNAUTHORIZED)
+
+      ;; Create proposal
+      (map-set investment-proposals new-proposal-id {
+        proposer: tx-sender,
+        title: title,
+        funding-amount: funding-amount,
+        beneficiary: beneficiary,
+        expiry-height: (+ stacks-block-height duration),
+        is-executed: false,
+        votes-for: u0,
+        votes-against: u0,
+      })
+
+      (var-set proposal-counter new-proposal-id)
+      (ok new-proposal-id)
+    )
+  )
+)
